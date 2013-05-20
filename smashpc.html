@@ -1,5 +1,5 @@
 <head>
-  <title>smash! pc</title>
+  <title>SMASH PC</title>
   <script type="text/javascript" src="https://raw.github.com/mrdoob/three.js/master/build/three.js">
 
   </script>
@@ -10,18 +10,18 @@
 </body>
 
 <template name="hello">
-  <h1>Hello World!</h1>
   {{greeting}}
-  <input id="one" type="button" value="Click" />
   {{> container}}
 </template>
 
 <template name="container">
 	<div id="container">
 	</div>
-  <input id="two" type="button" value="Reset" />
-  <input id="up" type="button" value="Up" />
-  <input id="down" type="button" value="Down" />
-  <input id="left" type="button" value="Left" />
-  <input id="right" type="button" value="Right" />
+  {{> controls}}
+</template>
+
+<template name="controls">
+  Name: <input id="name" type="text" value="defaultName" /><br />
+  <input id="chat" type="text" value="" /><br />
+  <input id="reset" type="button" value="Reset" />
 </template>
