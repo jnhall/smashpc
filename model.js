@@ -1,1 +1,1 @@
-Balls = new Meteor.Collection('balls');
+Entities = new Meteor.Collection('entities');

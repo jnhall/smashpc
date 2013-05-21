@@ -1,7 +1,7 @@
  Meteor.startup(function () {
-    Balls.remove({});
+    Entities.remove({});
   });
 
-Meteor.publish('balls', function () {
-  return Balls.find({});
+Meteor.publish('entities', function () {
+  return Entities.find({});
 });

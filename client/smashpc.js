@@ -1,257 +1,341 @@
-var avatar;
-  Meteor.startup(function () {
-    var ballId = Balls.insert({x: 0, y: 0, lastMove: {x: 0, y: 0 }});
-    Session.set('ballId', ballId);
-    Session.set('motiony', 0);
-    Session.set('motionx', 0);
-    function init() {
-      // set up the sphere vars
-      var avatarGeom = new THREE.CylinderGeometry(1.2, 0, 2.2, 3, 1);
-      avatarGeom.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
-      avatar = new THREE.Mesh(
-           avatarGeom,
-           new THREE.MeshLambertMaterial({color: 0x00FFFF }));
+/*jslint white: true, sloppy: true */
+// entire game state, timestep between last render, and object full of currently held keys
+var game, timestep = 0, down = {};
 
-      avatar.name = ballId;
-      avatar.motion = {x: {curr: 0, d: 0.3, max: 1}, y: {curr: 0, d: 0.2, max: 0.8}};
+//////////////////////////////////////////
+//
+// Projectile prototype
+//
+//////////////////////////////////////////
 
-      function movement(objm, mag) {
-        if(mag!=0){
-          if(mag>0&&objm.curr<0||mag<0&&objm.curr>0)
-            objm.curr = 0;
-          objm.curr = objm.curr + mag * objm.d;
-          if(objm.curr>objm.max || objm.curr<-objm.max){
-            console.log("Maxed at "+objm.curr);
-            objm.curr = mag*objm.max;
-            console.log("Fixed at "+objm.curr);
-            console.log(mag);
-            console.log(objm.max);
+var Projectile = function(mesh, direction, speed, cooldown) {
+  this.mesh = mesh;
+  this.direction = direction;
+  this.speed = speed;
+  this.cooldown = {current: 0, max: cooldown};
+};
 
-          }
-        }
-        else {
-          if(Math.abs(objm.curr) - objm.d*3 < 0)
-            objm.curr = 0;
-          else if(objm.curr > 0)
-            objm.curr = objm.curr - objm.d*3;
-          else
-            objm.curr = objm.curr + objm.d*3;
-        }
-        return objm.curr;
+Projectile.prototype.update = function() {
+    this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed));
+};
+
+
+//////////////////////////////////////////
+//
+// Weapon prototype
+//
+//////////////////////////////////////////
+/*
+var Weapon = function(mesh, direction, speed, cooldown) {
+  this.mesh = mesh;
+  this.direction = direction;
+  this.speed = speed;
+  this.cooldown = {current: 0, max: cooldown};
+};
+
+Weapon.prototype.pullTrigger = function() {
+    this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed));
+};*/
+
+//////////////////////////////////////////
+//
+// Ally prototype
+//
+//////////////////////////////////////////
+
+var Ally = function(name, x, y, lastMove) {
+  this.mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.2, 0, 2.2, 3, 1)
+      .applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI)),
+    new THREE.MeshLambertMaterial({color: 0x00FF00 }));
+
+  this.mesh.name = name;
+  this.mesh.position.x = x;
+  this.mesh.position.y = y;
+  this.mesh.lastMove = {x: lastMove.x, y: lastMove.y};
+};
+
+
+//////////////////////////////////////////
+//
+// Player prototype
+//
+//////////////////////////////////////////
+
+var Player = function(name) {
+  this.mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.2, 0, 2.2, 3, 1)
+      .applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI)),
+    new THREE.MeshLambertMaterial({color: 0x00FFFF }));
+
+  this.name = name;
+
+  this.id = name;
+
+  this.position = {x: 0, y: 0};
+
+  this.motion = {
+    x: {curr: 0, accel: 0.3, deccel: 0.9, max: 1, magnitude: 0},
+    y: {curr: 0, accel: 0.2, deccel: 0.9, max: 0.8, magnitude: 0}};
+
+  this.isFiring = false;
+
+  this.axes = Object.keys(this.motion);
+};
+
+Player.prototype.move = function() {
+  var moveInfo = { lastMove:{} }, motion, i;
+
+  for(i=0; i<this.axes.length; i += 1) {
+    motion = this.motion[this.axes[i]];
+    if(motion.magnitude!==0){
+      if( (motion.magnitude>0 && motion.curr<0) 
+        || (motion.magnitude<0 && motion.curr>0) ) {
+        motion.curr = 0;
       }
-      var start = {x:0, y:0};
-      var end = {x:0, y:0};
-      var dir = {x:0, y:0};
 
-      function animate() {
+      motion.curr = motion.curr + motion.magnitude * motion.accel;
 
-        requestAnimationFrame( animate );
-        render();
+      if( (motion.curr>motion.max)
+        || (motion.curr<-motion.max) ){
+        motion.curr = motion.magnitude*motion.max;
       }
-      function render() {
-        dir.x = Session.get('motionx');
-        dir.y = Session.get('motiony');
-        moving = (dir.x || avatar.motion.x.curr || dir.y || avatar.motion.y.curr);
-        if(moving){
-          newpos = {};
-
-          var dx = movement(avatar.motion.x, dir.x);
-          if(dx!=0)
-            newpos.x = avatar.position.x+dx;
-
-          var dy = movement(avatar.motion.y, dir.y);
-          if(dy!=0)
-            newpos.y = avatar.position.y+dy;
-
-          newpos.lastMove = {x: dx, y: dy};
-          console.log(newpos.motion);
-          Balls.update(ballId, {$set: newpos});
-        }
-        
-        for(var i=0; i<scene.children.length; i++) {
-          if(scene.children[i].name!=ballId && scene.children[i].lastMove!==undefined
-            && ( scene.children[i].lastMove.x != 0 || scene.children[i].lastMove.y != 0 )) {
-            console.log(scene.children[i].lastMove);
-            scene.children[i].position.x += (scene.children[i].lastMove.x*=0.99);
-            scene.children[i].position.y += (scene.children[i].lastMove.y*=0.99);
-          }
-        }
-        renderer.render( scene, camera );
-      }
-
-
-      // create a new mesh with sphere geometry -
-      // we will cover the sphereMaterial next!
-      // add the sphere to the scene
-           // set the scene size
-      var WIDTH = 1024,
-          HEIGHT = 768;
-
-      // set some camera attributes
-      var VIEW_ANGLE = 45,
-          ASPECT = WIDTH / HEIGHT,
-          NEAR = 0.1,
-          FAR = 10000;
-
-      var camera = new THREE.PerspectiveCamera(  VIEW_ANGLE,
-                                      ASPECT,
-                                      NEAR,
-                                      FAR  );
-      var scene = new THREE.Scene();
-      // the camera starts at 0,0,0 so pull it back
-      camera.position.z = 50;
-
-      scene.add(avatar);
-      // and the camera
-      scene.add(camera);
-
-
-      // create a point light
-      var pointLight = new THREE.PointLight( 0xFFFFFF );
-
-      // set its position
-      pointLight.position.x = 10;
-      pointLight.position.y = 50;
-      pointLight.position.z = 130;
-
-      // add to the scene
-      scene.add(pointLight);
-
-      var $container = $('#container');
-      var renderer = new THREE.WebGLRenderer();
-      // start the renderer
-      renderer.setSize(WIDTH, HEIGHT);
-
-      // attach the render-supplied DOM element
-      $container.append(renderer.domElement);
-
-      animate();
-
-      var query = Balls.find({});
-      var handle = query.observeChanges({
-        changed: function (id, fields) {
-          var ball = Balls.findOne(id);
-          var changed = scene.getObjectByName(id);
-
-          changed.position.x = ball.x;
-          changed.position.y = ball.y;
-          changed.lastMove = {x: ball.lastMove.x, y: ball.lastMove.y};
-          console.log(ball.lastMove);
-          console.log(changed.lastMove);
-        },
-        added: function (id) {
-          console.log('Added ball id ' + id);
-          var ball = Balls.findOne(id);
-          console.log(ball);
-          var added = new THREE.Mesh(
-           avatarGeom,
-           new THREE.MeshPhongMaterial({color: 0xFF0000 }));
-          added.name = id;
-          scene.add(added);
-          added.position.x = ball.x;
-          added.position.y = ball.y;
-          added.lastMove = {x: ball.lastMove.x, y: ball.lastMove.y};
-        },
-        removed: function (id) {
-          var changed = scene.getObjectByName(id);
-          scene.remove(changed);
-        },
-      });
     }
-    init();
-  });
-
-  Template.hello.rendered = function(){
-    down = {};
-    $('body').on('keydown', function(event){
-      var keycode = (event.keyCode ? event.keyCode : event.which);
-      if(!down[keycode] && (keycode == 87 || keycode == 65 || keycode == 83 || keycode == 68)){
-        //var ball = Balls.findOne(Session.get('ballId'));
-        switch(keycode){
-          case 87: //w
-            Session.set('motiony', Session.get('motiony')+1);
-            break;
-          case 65: //a
-            Session.set('motionx', Session.get('motionx')-1);
-            break;
-          case 83: //s
-            Session.set('motiony', Session.get('motiony')-1);
-            break;
-          case 68: //d
-            Session.set('motionx', Session.get('motionx')+1);
-            break;
-        }
-        down[keycode] = true;
-
-        //Balls.update(ball._id, {$set: {direction: direction}});
+    else {
+      if(Math.abs(motion.curr) - motion.accel*3 < 0) {
+        motion.curr = 0; 
+      } else if(motion.curr > 0) {
+        motion.curr = motion.curr - motion.accel*3;
+      } else {
+        motion.curr = motion.curr + motion.accel*3;
       }
-    });
-    $('body').on('keyup', function(event){
-      var keycode = (event.keyCode ? event.keyCode : event.which);
-      if(down[keycode] && (keycode == 87 || keycode == 65 || keycode == 83 || keycode == 68)){
-        down[keycode] = null;
-        //var ball = Balls.findOne(Session.get('ballId'));
-        var direction = {};
-        switch(keycode){
-          case 87: //w
-            Session.set('motiony', Session.get('motiony')-1);
-            break;
-          case 65: //a
-            Session.set('motionx', Session.get('motionx')+1);
-            break;
-          case 83: //s
-            Session.set('motiony', Session.get('motiony')+1);
-            break;
-          case 68: //d
-            Session.set('motionx', Session.get('motionx')-1);
-            break;
-        }
-        //Balls.update(ball._id, {$set: {direction: direction }});
-      }
-    });
+    }
+    moveInfo.lastMove[this.axes[i]] = motion.curr;
+    moveInfo[this.axes[i]] = this.position[this.axes[i]] + motion.curr;
+  }
+
+  return moveInfo;
+};
+
+Player.prototype.fire = function() {
+  //if(this.cooldown.current<=0){
+    //fire ze missiles!
+  //}
+};
+
+Player.prototype.update = function() {
+  this.moveInfo = this.move();
+  this.cooldown.current -= timestep;
+  this.cooldown.current = this.cooldown.max;
+};
+
+//////////////////////////////////////////
+//
+// Game prototype
+//
+//////////////////////////////////////////
+
+var Game = function(playerName) {
+  var scene, camera, renderer;
+  this.player = new Player(playerName);
+  this.friends = [];
+  this.projectiles = [];
+  this.lastUpdate = new Date().getTime();
+
+  animate = function() {
+    requestAnimationFrame( animate );
+    render();
   };
 
-  Template.hello.greeting = function () {
-    return 'Welcome to smashpc.';
+  render = function() {
+    timestep = new Date().getTime() - this.lastUpdate;
+    this.lastUpdate = new Date().getTime();
+    game.update();
+    renderer.render( scene, camera );
   };
 
-  Template.hello.events({
-    'click input#one' : function () {
-      // template data, if any, is available in 'this'
-      if (typeof console !== 'undefined')
-        console.log('You pressed the button');
-        Session.set('name', 'Bob');
-        var balls = Balls.find({});
-        var x=0;
+  this.init = function() { init(); };
+  init = function() {
+    var WIDTH = window.innerHeight,
+        HEIGHT = window.innerHeight,
+        VIEW_ANGLE = 45,
+        ASPECT = WIDTH / HEIGHT,
+        NEAR = 0.1,
+        FAR = 10000,
+        pointLight = new THREE.PointLight( 0xFFFFFF ),
+        query, handle;
 
-        balls.forEach(function (ball) {
-          console.log(ball);
-         
-          console.log(x);
-         //console.log(Session.get('scene'));
-        });
+    camera = new THREE.PerspectiveCamera(  VIEW_ANGLE,
+                                    ASPECT,
+                                    NEAR,
+                                    FAR  );
+    scene = new THREE.Scene();
+    camera.position.z = 50;
+
+    scene.add(this.player.mesh);
+    scene.add(camera);
+
+    pointLight.position.x = 10;
+    pointLight.position.y = 50;
+    pointLight.position.z = 130;
+    scene.add(pointLight);
+
+    renderer = new THREE.WebGLRenderer();
+    renderer.setSize(WIDTH, HEIGHT);
+
+    var $container = $('#container');
+    $container.append(renderer.domElement);
+
+    query = Entities.find({});
+    handle = query.observeChanges({
+      changed: function (id, fields) {
+        var changed = scene.getObjectByName(id);
+        changed.position.x = fields.x;
+        changed.position.y = fields.y;
+        changed.lastMove = {x: fields.lastMove.x, y: fields.lastMove.y};
+      },
+      added: function (id) {
+        console.log('Added entity id ' + id);
+        var entity = Entities.findOne(id);
+        if(entity.type === 'ally'){
+          var newAlly = new Ally(id, entity.x, entity.y, {x: entity.lastMove.x, y: entity.lastMove.y} );
+          scene.add(newAlly.mesh);
+        }
+      },
+      removed: function (id) {
+        var changed = scene.getObjectByName(id);
+        scene.remove(changed);
+      }
+    });
+    animate();
+  };
+
+  this.update = function() {
+    var i;
+
+    for(i=0; i<this.projectiles.length; i += 1){
+      this.projectiles[i].update();
     }
-  });
-  
-  Template.controls.events({
-    'click input#reset' : function () {
-      var balls = Balls.find({});
-      balls.forEach(function (ball) {  
-        Balls.remove(ball._id);
-      });
-    },
-    'keydown input#name' : function (e) {
-      console.log(e);//Session.set('name', $())
-    },
-    'keydown input#chat' : function (e) {
-      
-    },
-  });
+    if(this.player.motion.x.magnitude
+      || this.player.motion.x.curr
+      || this.player.motion.y.magnitude
+      || this.player.motion.y.curr) {
+      var updateInfo = this.player.update();
 
-  Template.container.events({
-    'click canvas' : function() {
-      console.log(avatar);
-      console.log('Clicked it!');
-    },
-  });
-  Meteor.subscribe('balls');
+      Entities.update(this.player.id, {$set: updateInfo.moveInfo});
+    }
+    
+    for(i=0; i<scene.children.length; i += 1) {
+      if(scene.children[i].name!==this.player.name && scene.children[i].lastMove!==undefined
+        && ( scene.children[i].lastMove.x !== 0 || scene.children[i].lastMove.y !== 0 )) {
+        console.log(scene.children[i].lastMove);
+        scene.children[i].position.x += (scene.children[i].lastMove.x*=0.99);
+        scene.children[i].position.y += (scene.children[i].lastMove.y*=0.99);
+      }
+    }
+  };
+
+  var onWindowResize = function() {
+    var windowWidth = window.innerHeight;
+    var windowHeight = window.innerHeight;
+    camera.aspect = windowWidth / windowHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize( windowWidth, windowHeight );
+  };
+};
+
+//////////////////////////////////////////
+//
+// Meteor client code
+//
+//////////////////////////////////////////
+Meteor.startup(function () {
+  var entityId = Entities.insert({x: 0, y: 0, lastMove: {x: 0, y: 0 }, type: 'ally'});
+  game = new Game(entityId);
+  game.init();
+  resizeCanvas();
+  window.addEventListener('resize', onWindowResize);
+
+});
+
+Template.content.rendered = function(){
+  var keycode, firing, moving, change,
+  onKeyChange = function(event, activate) {
+    keycode = event.keyCode || event.which;
+    if( (activate && down[keycode]) || (!activate && !down[keycode]) ) {
+      return;
+    }
+
+    if(activate) {
+      change = 1;
+    } else {
+      change = -1;
+    }
+
+    firing = keycode === 32;
+    moving = keycode === 87 || keycode === 65 || keycode === 83 || keycode === 68;
+
+    if(moving){
+      //var entity = Entities.findOne(Session.get('entityId'));
+      switch(keycode){
+        case 87: //w
+          game.player.y.magnitude += change;
+          break;
+        case 65: //a
+          game.player.x.magnitude -= change;
+          break;
+        case 83: //s
+          game.player.y.magnitude -= change;
+          break;
+        case 68: //d
+          game.player.x.magnitude += change;
+          break;
+      }
+    } else if (firing) {
+      game.player.isFiring = activate;
+    }
+    down[keycode] = activate || null;
+  };
+  $('body').on('keydown', function(event){onKeyChange(event, true)});
+  $('body').on('keyup', function(event){onKeyChange(event, false)});
+
+};
+
+Template.content.greeting = function () {
+  return 'Welcome to smashpc.';
+};
+
+Template.content.events({
+  'click input#one' : function () {
+      console.log('You pressed the button');
+      Session.set('name', 'Bob');
+      var entities = Entities.find({});
+      var x=0;
+
+      entities.forEach(function (entity) {
+        console.log(entity);
+      });
+  }
+});
+
+Template.controls.events({
+  'click input#reset' : function () {
+    var entities = Entities.find({});
+    entities.forEach(function (entity) {  
+      Entities.remove(entity._id);
+    });
+  },
+  'keydown input#name' : function (e) {
+    console.log(e);//Session.set('name', $())
+  },
+  'keydown input#chat' : function (e) {
+    
+  },
+});
+
+Template.container.events({
+  'click canvas' : function() {
+    console.log('Clicked it!');
+  },
+});
+Meteor.subscribe('entities');
