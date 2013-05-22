@@ -22,6 +22,9 @@
 	user-select: none;
 	-webkit-user-select: none;
 	-moz-user-select: none;
+}
+
+.container {
 	background-color: black;
 }
 

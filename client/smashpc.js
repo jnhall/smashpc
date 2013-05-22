@@ -1,6 +1,6 @@
 /*jslint white: true, sloppy: true */
 // entire game state, timestep between last render, and object full of currently held keys
-var game, timestep = 0, down = {};
+var game, timestep = 0, down = {}, camera, renderer, scene;
 
 //////////////////////////////////////////
 //
@@ -16,7 +16,8 @@ var Projectile = function(mesh, direction, speed, cooldown) {
 };
 
 Projectile.prototype.update = function() {
-    this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed));
+  console.log("Ping!");
+  this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed));
 };
 
 
@@ -44,15 +45,18 @@ Weapon.prototype.pullTrigger = function() {
 //////////////////////////////////////////
 
 var Ally = function(name, x, y, lastMove) {
-  this.mesh = new THREE.Mesh(
+  mesh = new THREE.Mesh(
     new THREE.CylinderGeometry(1.2, 0, 2.2, 3, 1)
       .applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI)),
     new THREE.MeshLambertMaterial({color: 0x00FF00 }));
+  scene.add(mesh);
+  mesh.name = name;
+  mesh.position.x = x;
+  mesh.position.y = y;
+  mesh.lastMove = {x: lastMove.x, y: lastMove.y};
 
-  this.mesh.name = name;
-  this.mesh.position.x = x;
-  this.mesh.position.y = y;
-  this.mesh.lastMove = {x: lastMove.x, y: lastMove.y};
+  this.mesh = mesh;
+
 };
 
 
@@ -63,13 +67,14 @@ var Ally = function(name, x, y, lastMove) {
 //////////////////////////////////////////
 
 var Player = function(name) {
-  this.mesh = new THREE.Mesh(
+  mesh = new THREE.Mesh(
     new THREE.CylinderGeometry(1.2, 0, 2.2, 3, 1)
       .applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI)),
     new THREE.MeshLambertMaterial({color: 0x00FFFF }));
+  scene.add(mesh);
+  this.mesh = mesh;
 
   this.name = name;
-
   this.id = name;
 
   this.position = {x: 0, y: 0};
@@ -88,6 +93,9 @@ Player.prototype.move = function() {
 
   for(i=0; i<this.axes.length; i += 1) {
     motion = this.motion[this.axes[i]];
+    console.log('before');
+    console.log(this.motion);
+    console.log('after');
     if(motion.magnitude!==0){
       if( (motion.magnitude>0 && motion.curr<0) 
         || (motion.magnitude<0 && motion.curr>0) ) {
@@ -135,87 +143,18 @@ Player.prototype.update = function() {
 //
 //////////////////////////////////////////
 
-var Game = function(playerName) {
-  var scene, camera, renderer;
-  this.player = new Player(playerName);
-  this.friends = [];
-  this.projectiles = [];
-  this.lastUpdate = new Date().getTime();
-
-  animate = function() {
-    requestAnimationFrame( animate );
-    render();
-  };
-
-  render = function() {
-    timestep = new Date().getTime() - this.lastUpdate;
-    this.lastUpdate = new Date().getTime();
-    game.update();
-    renderer.render( scene, camera );
-  };
-
-  this.init = function() { init(); };
-  init = function() {
-    var WIDTH = window.innerHeight,
-        HEIGHT = window.innerHeight,
-        VIEW_ANGLE = 45,
-        ASPECT = WIDTH / HEIGHT,
-        NEAR = 0.1,
-        FAR = 10000,
-        pointLight = new THREE.PointLight( 0xFFFFFF ),
-        query, handle;
-
-    camera = new THREE.PerspectiveCamera(  VIEW_ANGLE,
-                                    ASPECT,
-                                    NEAR,
-                                    FAR  );
-    scene = new THREE.Scene();
-    camera.position.z = 50;
-
-    scene.add(this.player.mesh);
-    scene.add(camera);
-
-    pointLight.position.x = 10;
-    pointLight.position.y = 50;
-    pointLight.position.z = 130;
-    scene.add(pointLight);
-
-    renderer = new THREE.WebGLRenderer();
-    renderer.setSize(WIDTH, HEIGHT);
-
-    var $container = $('#container');
-    $container.append(renderer.domElement);
-
-    query = Entities.find({});
-    handle = query.observeChanges({
-      changed: function (id, fields) {
-        var changed = scene.getObjectByName(id);
-        changed.position.x = fields.x;
-        changed.position.y = fields.y;
-        changed.lastMove = {x: fields.lastMove.x, y: fields.lastMove.y};
-      },
-      added: function (id) {
-        console.log('Added entity id ' + id);
-        var entity = Entities.findOne(id);
-        if(entity.type === 'ally'){
-          var newAlly = new Ally(id, entity.x, entity.y, {x: entity.lastMove.x, y: entity.lastMove.y} );
-          scene.add(newAlly.mesh);
-        }
-      },
-      removed: function (id) {
-        var changed = scene.getObjectByName(id);
-        scene.remove(changed);
-      }
-    });
-    animate();
-  };
-
-  this.update = function() {
+game = {
+  player : null,
+  friends : [],
+  projectiles : [],
+  lastUpdate : new Date().getTime(),
+  update : function() {
     var i;
 
     for(i=0; i<this.projectiles.length; i += 1){
       this.projectiles[i].update();
     }
+
     if(this.player.motion.x.magnitude
       || this.player.motion.x.curr
       || this.player.motion.y.magnitude
@@ -233,15 +172,94 @@ var Game = function(playerName) {
         scene.children[i].position.y += (scene.children[i].lastMove.y*=0.99);
       }
     }
-  };
+  },
 
-  var onWindowResize = function() {
+  onWindowResize : function() {
     var windowWidth = window.innerHeight;
     var windowHeight = window.innerHeight;
     camera.aspect = windowWidth / windowHeight;
     camera.updateProjectionMatrix();
     renderer.setSize( windowWidth, windowHeight );
-  };
+  }
+};
+
+//////////////////////////////////////////
+//
+// Render loop
+//
+//////////////////////////////////////////
+
+var animate = function() {
+  requestAnimationFrame( animate );
+  render();
+};
+
+var render = function() {
+  timestep = new Date().getTime() - game.lastUpdate;
+  game.lastUpdate = new Date().getTime();
+  game.update();
+  renderer.render( scene, camera );
+};
+
+//////////////////////////////////////////
+//
+// Initialization
+//
+//////////////////////////////////////////
+
+var init = function(name) {
+  var WIDTH = window.innerHeight,
+      HEIGHT = window.innerHeight,
+      VIEW_ANGLE = 45,
+      ASPECT = WIDTH / HEIGHT,
+      NEAR = 0.1,
+      FAR = 10000,
+      pointLight = new THREE.PointLight( 0xFFFFFF ),
+      query, handle;
+
+  camera = new THREE.PerspectiveCamera(  VIEW_ANGLE,
+                                  ASPECT,
+                                  NEAR,
+                                  FAR  );
+  scene = new THREE.Scene();
+  camera.position.z = 50;
+  scene.add(camera);
+  game.player = new Player(name);
+
+  pointLight.position.x = 10;
+  pointLight.position.y = 50;
+  pointLight.position.z = 130;
+  scene.add(pointLight);
+
+  renderer = new THREE.WebGLRenderer();
+  renderer.setSize(WIDTH, HEIGHT);
+
+  var $container = $('.container');
+  $container.append(renderer.domElement);
+
+  query = Entities.find({});
+  handle = query.observeChanges({
+    changed: function (id, fields) {
+      var changed = scene.getObjectByName(id);
+      changed.position.x = fields.x;
+      changed.position.y = fields.y;
+      changed.lastMove = {x: fields.lastMove.x, y: fields.lastMove.y};
+    },
+    added: function (id) {
+      console.log('Added entity id ' + id);
+      var entity = Entities.findOne(id);
+      if(entity.type === 'ally'){
+        var newAlly = new Ally(id, entity.x, entity.y, {x: entity.lastMove.x, y: entity.lastMove.y} );
+        console.log(newAlly);
+        //scene.add(newAlly.mesh);
+      }
+    },
+    removed: function (id) {
+      var changed = scene.getObjectByName(id);
+      scene.remove(changed);
+    }
+  });
+  animate();
 };
 
 //////////////////////////////////////////
@@ -251,11 +269,8 @@ var Game = function(playerName) {
 //////////////////////////////////////////
 Meteor.startup(function () {
   var entityId = Entities.insert({x: 0, y: 0, lastMove: {x: 0, y: 0 }, type: 'ally'});
-  game = new Game(entityId);
-  game.init();
-  resizeCanvas();
-  window.addEventListener('resize', onWindowResize);
-
+  init(entityId);
+  window.addEventListener('resize', game.onWindowResize);
 });
 
 Template.content.rendered = function(){
@@ -339,3 +354,5 @@ Template.container.events({
   },
 });
 Meteor.subscribe('entities');
+
+
