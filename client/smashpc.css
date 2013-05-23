@@ -10,7 +10,7 @@
 }
 
 .rightCol {
-	float: right;
+	float: left;
 }
 
 .wrap {
@@ -24,8 +24,7 @@
 	-moz-user-select: none;
 }
 
-.container {
-	background-color: black;
+.container canvas{
 }
 
 body {

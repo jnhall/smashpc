@@ -8,15 +8,31 @@ var game, timestep = 0, down = {}, camera, renderer, scene;
 //
 //////////////////////////////////////////
 
-var Projectile = function(mesh, direction, speed, cooldown) {
+var Projectile = function(_mesh, _direction, _speed, _cooldown, _bulletLife) {
+  mesh = new THREE.Mesh().clone(_mesh);
+  mesh.position.copy(game.player.mesh.position);
+  direction = _direction;
+  speed = _speed;
+  cooldown = {current: 0, max: _cooldown};
+  lifetime = _bulletLife;
+  scene.add(mesh);
+
   this.mesh = mesh;
   this.direction = direction;
   this.speed = speed;
-  this.cooldown = {current: 0, max: cooldown};
+  this.cooldown = cooldown;
+  this.lifetime = lifetime;
 };
 
 Projectile.prototype.update = function() {
-  console.log("Ping!");
+  this.lifetime -= new Date().getTime() - this.cooldown.lastCheck;
+  if(this.lifetime<=0) {
+    game.projectiles.splice(game.projectiles.indexOf(this), 1);
+    console.log(game.projectiles);
+    scene.remove(this.mesh);
+    this.mesh.dispose();
+
+  }
   this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed));
 };
 
@@ -26,17 +42,30 @@ Projectile.prototype.update = function() {
 // Weapon prototype
 //
 //////////////////////////////////////////
-/*
-var Weapon = function(mesh, direction, speed, cooldown) {
-  this.mesh = mesh;
-  this.direction = direction;
+
+var Weapon = function(mesh, speed, cooldown, bulletLife) {
+  this.mesh = new THREE.Mesh().clone(mesh);
   this.speed = speed;
-  this.cooldown = {current: 0, max: cooldown};
+  this.cooldown = {current: 0, max: cooldown, lastCheck: new Date().getTime()};
 };
 
 Weapon.prototype.pullTrigger = function() {
-    this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed));
-};*/
+    this.cooldown.current -= new Date().getTime() - this.cooldown.lastCheck;
+    console.log(this.cooldown.current);
+    if(this.cooldown.current <= 0){
+      //FIRE!
+      this.cooldown.current = this.cooldown.max;
+      game.projectiles.push(
+        new Projectile(
+          this.mesh,
+          new THREE.Vector3(0,1,0),
+          this.speed,
+          this.cooldown,
+          this.bulletLife
+        )
+      );
+    }
+};
 
 //////////////////////////////////////////
 //
@@ -45,18 +74,19 @@ Weapon.prototype.pullTrigger = function() {
 //////////////////////////////////////////
 
 var Ally = function(name, x, y, lastMove) {
-  mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.2, 0, 2.2, 3, 1)
-      .applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI)),
-    new THREE.MeshLambertMaterial({color: 0x00FF00 }));
+  var geometry = new THREE.CylinderGeometry(12, 0, 22, 3, 1, false);
+  geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
+  var material = new THREE.MeshLambertMaterial({color: 0x00FF00 });
+  var mesh = new THREE.Mesh( geometry, material );
   scene.add(mesh);
+
   mesh.name = name;
+  mesh.type = 'ally';
   mesh.position.x = x;
   mesh.position.y = y;
-  mesh.lastMove = {x: lastMove.x, y: lastMove.y};
+  mesh.position.lastMove = {x: lastMove.x, y: lastMove.y};
 
   this.mesh = mesh;
-
 };
 
 
@@ -67,35 +97,42 @@ var Ally = function(name, x, y, lastMove) {
 //////////////////////////////////////////
 
 var Player = function(name) {
-  mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.2, 0, 2.2, 3, 1)
-      .applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI)),
-    new THREE.MeshLambertMaterial({color: 0x00FFFF }));
+  var geometry = new THREE.CylinderGeometry(12, 0, 22, 3, 1, false);
+  geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
+  var material = new THREE.MeshLambertMaterial({color: 0x00FFFF });
+  var mesh = new THREE.Mesh( geometry, material );
   scene.add(mesh);
-  this.mesh = mesh;
 
+  this.mesh = mesh;
   this.name = name;
   this.id = name;
 
-  this.position = {x: 0, y: 0};
-
   this.motion = {
-    x: {curr: 0, accel: 0.3, deccel: 0.9, max: 1, magnitude: 0},
-    y: {curr: 0, accel: 0.2, deccel: 0.9, max: 0.8, magnitude: 0}};
+    x: {curr: 0, accel: 1, deccel: 1.8, max: 3, magnitude: 0},
+    y: {curr: 0, accel: 0.9, deccel: 0.9, max: 1.8, magnitude: 0}};
 
+  this.weapon = new Weapon(
+    new THREE.Mesh(new THREE.CubeGeometry(1,5,1), new THREE.MeshBasicMaterial({color:0xFF0000})),
+    0.1,
+    0.01,
+    2
+  );
   this.isFiring = false;
 
   this.axes = Object.keys(this.motion);
 };
 
 Player.prototype.move = function() {
-  var moveInfo = { lastMove:{} }, motion, i;
+  if(!this.motion.x.magnitude
+    && !this.motion.x.curr
+    && !this.motion.y.magnitude
+    && !this.motion.y.curr)
+    return;
+  var moveInfo = { x: null, y: null, lastMove:{x: 0, y: 0} }, motion, i;
 
   for(i=0; i<this.axes.length; i += 1) {
     motion = this.motion[this.axes[i]];
-    console.log('before');
-    console.log(this.motion);
-    console.log('after');
+
     if(motion.magnitude!==0){
       if( (motion.magnitude>0 && motion.curr<0) 
         || (motion.magnitude<0 && motion.curr>0) ) {
@@ -119,27 +156,32 @@ Player.prototype.move = function() {
       }
     }
     moveInfo.lastMove[this.axes[i]] = motion.curr;
-    moveInfo[this.axes[i]] = this.position[this.axes[i]] + motion.curr;
+    moveInfo[this.axes[i]] = (this.mesh.position[this.axes[i]] += motion.curr);
+    //console.log(this.mesh.position[this.axes[i]]);
   }
 
   return moveInfo;
 };
 
 Player.prototype.fire = function() {
-  //if(this.cooldown.current<=0){
-    //fire ze missiles!
-  //}
+  if(this.isFiring){
+    console.log("PULL TRIGGER!");
+    this.weapon.pullTrigger();
+  }
 };
 
 Player.prototype.update = function() {
-  this.moveInfo = this.move();
-  this.cooldown.current -= timestep;
-  this.cooldown.current = this.cooldown.max;
+  return {
+    moveInfo: this.move(),
+    fireInfo: this.fire()
+  }
+  //this.cooldown.current -= timestep;
+  //this.cooldown.current = this.cooldown.max;
 };
 
 //////////////////////////////////////////
 //
-// Game prototype
+// Game state
 //
 //////////////////////////////////////////
 
@@ -154,22 +196,17 @@ game = {
     for(i=0; i<this.projectiles.length; i += 1){
       this.projectiles[i].update();
     }
+    console.log(this.projectiles.length);
 
-    if(this.player.motion.x.magnitude
-      || this.player.motion.x.curr
-      || this.player.motion.y.magnitude
-      || this.player.motion.y.curr) {
-      var updateInfo = this.player.update();
 
-      Entities.update(this.player.id, {$set: updateInfo.moveInfo});
-    }
-    
+    var updateInfo = this.player.update();
+    Entities.update(this.player.id, {$set: updateInfo.moveInfo});
+
     for(i=0; i<scene.children.length; i += 1) {
-      if(scene.children[i].name!==this.player.name && scene.children[i].lastMove!==undefined
-        && ( scene.children[i].lastMove.x !== 0 || scene.children[i].lastMove.y !== 0 )) {
-        console.log(scene.children[i].lastMove);
-        scene.children[i].position.x += (scene.children[i].lastMove.x*=0.99);
-        scene.children[i].position.y += (scene.children[i].lastMove.y*=0.99);
+      if(scene.children[i].name=="ally" && scene.children[i].position.lastMove!==undefined
+        && ( scene.children[i].lastMove.x !== 0 || scene.children[i].position.lastMove.y !== 0 )) {
+        scene.children[i].position.x += (scene.children[i].position.lastMove.x*=0.99);
+        scene.children[i].position.y += (scene.children[i].position.lastMove.y*=0.99);
       }
     }
   },
@@ -190,14 +227,14 @@ game = {
 //////////////////////////////////////////
 
 var animate = function() {
+  timestep = new Date().getTime() - game.lastUpdate;
+  game.lastUpdate = new Date().getTime();
+  game.update();
   requestAnimationFrame( animate );
   render();
 };
 
 var render = function() {
-  timestep = new Date().getTime() - game.lastUpdate;
-  game.lastUpdate = new Date().getTime();
-  game.update();
   renderer.render( scene, camera );
 };
 
@@ -222,7 +259,7 @@ var init = function(name) {
                                   NEAR,
                                   FAR  );
   scene = new THREE.Scene();
-  camera.position.z = 50;
+  camera.position.z = 250;
   scene.add(camera);
   game.player = new Player(name);
 
@@ -236,16 +273,19 @@ var init = function(name) {
 
   var $container = $('.container');
   $container.append(renderer.domElement);
+  //scene.add(new THREE.Mesh(new THREE.CubeGeometry(5,5,5), new THREE.MeshBasicMaterial({color: 0xff0000})));
 
   query = Entities.find({});
   handle = query.observeChanges({
     changed: function (id, fields) {
+      if(id===game.player.id)
+        return;
       var changed = scene.getObjectByName(id);
-      changed.position.x = fields.x;
-      changed.position.y = fields.y;
-      changed.lastMove = {x: fields.lastMove.x, y: fields.lastMove.y};
+      $.extend(changed.position, fields);
     },
     added: function (id) {
+      if(id===game.player.id)
+        return;
       console.log('Added entity id ' + id);
       var entity = Entities.findOne(id);
       if(entity.type === 'ally'){
@@ -276,6 +316,7 @@ Meteor.startup(function () {
 Template.content.rendered = function(){
   var keycode, firing, moving, change,
   onKeyChange = function(event, activate) {
+    event.preventDefault();
     keycode = event.keyCode || event.which;
     if( (activate && down[keycode]) || (!activate && !down[keycode]) ) {
       return;
@@ -289,24 +330,27 @@ Template.content.rendered = function(){
 
     firing = keycode === 32;
     moving = keycode === 87 || keycode === 65 || keycode === 83 || keycode === 68;
-
     if(moving){
       //var entity = Entities.findOne(Session.get('entityId'));
       switch(keycode){
         case 87: //w
-          game.player.y.magnitude += change;
+          game.player.motion.y.magnitude += change;
           break;
         case 65: //a
-          game.player.x.magnitude -= change;
+          game.player.motion.x.magnitude -= change;
           break;
         case 83: //s
-          game.player.y.magnitude -= change;
+          game.player.motion.y.magnitude -= change;
           break;
         case 68: //d
-          game.player.x.magnitude += change;
+          game.player.motion.x.magnitude += change;
           break;
       }
     } else if (firing) {
+      if(activate)
+      console.log("FIRING!");
+      else
+      console.log("NOT FIRING!");
       game.player.isFiring = activate;
     }
     down[keycode] = activate || null;
