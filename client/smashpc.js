@@ -8,29 +8,27 @@ var game, timestep = 0, down = {}, camera, renderer, scene;
 //
 //////////////////////////////////////////
 
-var Projectile = function(_mesh, _direction, _speed, _cooldown, _bulletLife) {
-  mesh = new THREE.Mesh().clone(_mesh);
-  mesh.position.copy(game.player.mesh.position);
-  direction = _direction;
-  speed = _speed;
-  cooldown = {current: 0, max: _cooldown};
-  lifetime = _bulletLife;
-  scene.add(mesh);
-
-  this.mesh = mesh;
-  this.direction = direction;
+var Projectile = function(mesh, direction, speed, cooldown, lifetime) {
+  this.mesh = new THREE.Mesh(mesh.geometry, mesh.material);
+  this.mesh.position.copy(game.player.mesh.position);
+  this.direction = new THREE.Vector3().copy(direction);
   this.speed = speed;
-  this.cooldown = cooldown;
   this.lifetime = lifetime;
+  scene.add(this.mesh);
+
+  this.cooldown = {current: 0, max: cooldown, lastCheck: new Date().getTime()};
+
+  return this;
 };
 
 Projectile.prototype.update = function() {
-  this.lifetime -= new Date().getTime() - this.cooldown.lastCheck;
+  this.lifetime -= timestep;
   if(this.lifetime<=0) {
+    //console.log(games.projectiles);
+    //console.log(this);
     game.projectiles.splice(game.projectiles.indexOf(this), 1);
-    console.log(game.projectiles);
+    //console.log(this.speed);
     scene.remove(this.mesh);
-    this.mesh.dispose();
 
   }
   this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed));
@@ -43,25 +41,29 @@ Projectile.prototype.update = function() {
 //
 //////////////////////////////////////////
 
-var Weapon = function(mesh, speed, cooldown, bulletLife) {
-  this.mesh = new THREE.Mesh().clone(mesh);
+var Weapon = function(mesh, speed, cooldown, lifetime) {
+  this.mesh = new THREE.Mesh(mesh.geometry, mesh.material);
+  console.log(this.mesh);
   this.speed = speed;
   this.cooldown = {current: 0, max: cooldown, lastCheck: new Date().getTime()};
+  this.lifetime = lifetime;
 };
 
 Weapon.prototype.pullTrigger = function() {
-    this.cooldown.current -= new Date().getTime() - this.cooldown.lastCheck;
-    console.log(this.cooldown.current);
+    this.cooldown.current -= timestep;
+    //console.log(this.cooldown.current);
     if(this.cooldown.current <= 0){
       //FIRE!
       this.cooldown.current = this.cooldown.max;
+      console.log("this.speed:"+this.speed);
+      console.log(this.cooldown.current);
       game.projectiles.push(
         new Projectile(
           this.mesh,
           new THREE.Vector3(0,1,0),
           this.speed,
           this.cooldown,
-          this.bulletLife
+          this.lifetime
         )
       );
     }
@@ -99,7 +101,7 @@ var Ally = function(name, x, y, lastMove) {
 var Player = function(name) {
   var geometry = new THREE.CylinderGeometry(12, 0, 22, 3, 1, false);
   geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
-  var material = new THREE.MeshLambertMaterial({color: 0x00FFFF });
+  var material = new THREE.MeshPhongMaterial({color: 0x00FFFF });
   var mesh = new THREE.Mesh( geometry, material );
   scene.add(mesh);
 
@@ -113,9 +115,9 @@ var Player = function(name) {
 
   this.weapon = new Weapon(
     new THREE.Mesh(new THREE.CubeGeometry(1,5,1), new THREE.MeshBasicMaterial({color:0xFF0000})),
-    0.1,
-    0.01,
-    2
+    3,
+    100,
+    1000
   );
   this.isFiring = false;
 
@@ -165,7 +167,6 @@ Player.prototype.move = function() {
 
 Player.prototype.fire = function() {
   if(this.isFiring){
-    console.log("PULL TRIGGER!");
     this.weapon.pullTrigger();
   }
 };
@@ -194,9 +195,9 @@ game = {
     var i;
 
     for(i=0; i<this.projectiles.length; i += 1){
-      this.projectiles[i].update();
+      if(this.projectiles[i].lifetime != NaN);
+        this.projectiles[i].update();
     }
-    console.log(this.projectiles.length);
 
 
     var updateInfo = this.player.update();
@@ -269,6 +270,7 @@ var init = function(name) {
   scene.add(pointLight);
 
   renderer = new THREE.WebGLRenderer();
+  renderer.setClearColorHex(0x000000);
   renderer.setSize(WIDTH, HEIGHT);
 
   var $container = $('.container');
@@ -347,10 +349,6 @@ Template.content.rendered = function(){
           break;
       }
     } else if (firing) {
-      if(activate)
-      console.log("FIRING!");
-      else
-      console.log("NOT FIRING!");
       game.player.isFiring = activate;
     }
     down[keycode] = activate || null;
