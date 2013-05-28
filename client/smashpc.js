@@ -16,8 +16,8 @@ var ammo;
 //
 //////////////////////////////////////////
 
-var Enemy = function(name) {
-  var geometry = new THREE.CylinderGeometry(12, 0, 22, 3, 1, false);
+var Enemy = function(name, targets, startTime) {
+  var geometry = new THREE.CubeGeometry(10,10,1);
   geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
   var material = new THREE.MeshLambertMaterial({color: 0xFF00FF });
   mesh = new THREE.Mesh( geometry, material );
@@ -26,27 +26,90 @@ var Enemy = function(name) {
   mesh.name = name;
   mesh.type = 'enemy';
 
-  mesh.updated = {
-    x: x, y: y, lastMove: {x: lastMove.x, y: lastMove.y}, time: new Date().getTime()
-  };
-
   this.mesh = mesh;
-
 
   this.motion = {
     x: {curr: 0, accel: 2000, deccel: 3000, max: 200, magnitude: 0},
     y: {curr: 0, accel: 1500, deccel: 2000, max: 150, magnitude: 0}};
 
-  this.weapon = new Weapon(
-    150,
-    0.1,
-    2
-    );
 
+  this.targets = targets.slice(0);
+
+  this.nextTarget = 0;  
+
+  mesh.target = {
+    x: this.targets[0].x, y: this.targets[0].y
+  };
+  console.log("is a "+startTime);
+
+  this.startTime = startTime;
+
+  this.isActive = false;
 };
 
 Enemy.prototype.move = function() {
+  if(!this.isActive) {
+    if(new Date().getTime() < this.startTime){
+      console.log((new Date().getTime())+"<"+this.startTime)
+      return;
 
+    }
+    else
+      this.isActive = true;
+  }
+
+  var moveInfo = { x: null, y: null, lastMove:{x: 0, y: 0} , time: null}, motion, i;
+
+  var arrived = false;
+  for(i=0; i<AXES.length; i += 1) {  
+    if(this.mesh.target[AXES[i]] - this.mesh.position[AXES[i]] < BOT_ACCURACY
+      && this.mesh.target[AXES[i]] - this.mesh.position[AXES[i]] > -BOT_ACCURACY ){
+      if(arrived === true){
+        this.nextTarget = (this.nextTarget+1)%this.targets.length;
+        this.mesh.target = {
+          x: this.targets[this.nextTarget].x, y: this.targets[this.nextTarget].y
+        };
+      }
+      arrived = true;
+      continue;
+    }
+    motion = this.motion[AXES[i]];
+    motion.magnitude = 0;
+
+    if(this.mesh.target[AXES[i]]>this.mesh.position[AXES[i]])
+      motion.magnitude = 1.0;
+
+    if(this.mesh.target[AXES[i]]<this.mesh.position[AXES[i]])
+      motion.magnitude = -1.0;
+
+    if(motion.magnitude!==0){
+      if( (motion.magnitude>0 && motion.curr<0) 
+        || (motion.magnitude<0 && motion.curr>0) ) {
+        motion.curr = 0;
+      }
+
+      motion.curr += motion.magnitude * motion.accel*timestep;
+
+      if( (motion.curr>motion.max)
+        || (motion.curr<-motion.max) ){
+        motion.curr = motion.magnitude*motion.max;
+      }
+    }
+    else {
+      if(Math.abs(motion.curr) - motion.deccel*timestep < 0) {
+        motion.curr = 0; 
+      } else if(motion.curr > 0) {
+        motion.curr = motion.curr - motion.deccel*timestep;
+      } else {
+        motion.curr = motion.curr + motion.deccel*timestep;
+      }
+    }
+    if(this.mesh.target[AXES[i]]<this.mesh.position[AXES[i]] + motion.curr * timestep
+      && this.mesh.target[AXES[i]]>this.mesh.position[AXES[i]] + motion.curr * timestep)
+      motion.curr = (this.mesh.target[AXES[i]] - this.mesh.position[AXES[i]])/timestep;
+    moveInfo.lastMove[AXES[i]] = motion.curr;
+    moveInfo[AXES[i]] = (this.mesh.position[AXES[i]] += moveInfo.lastMove[AXES[i]]*timestep);
+  }
 };
 
 Enemy.prototype.update = function() {
@@ -105,7 +168,6 @@ Weapon.prototype.pullTrigger = function() {
     if(this.cooldown.current <= 0){
       //FIRE!
       this.cooldown.current = this.cooldown.max;
-      game.player
       Projectiles.insert({
           posx: game.player.mesh.position.x, posy: game.player.mesh.position.y, posz: game.player.mesh.position.z,
           dirx: 0, diry: 1, dirz: 0,
@@ -280,6 +342,7 @@ Player.prototype.move = function() {
     moveInfo[AXES[i]] = (this.mesh.position[AXES[i]] += moveInfo.lastMove[AXES[i]]*timestep);
   }
   moveInfo.time = new Date().getTime();
+  console.log(this.mesh.position);
   return moveInfo;
 };
 
@@ -394,6 +457,19 @@ var init = function(name) {
   scene.add(camera);
   game.player = new Player(name);
 
+
+  var testTargets = [{x: -140, y: 140} , {x: 140, y: 140}],
+    startTime = Session.get('time')+5000;
+  game.entities.push(new Enemy('test', 
+      testTargets,
+      startTime));
+  Entities.insert({ 
+      name: 'test',
+      targets: testTargets,
+      startTime: startTime,
+      type: 'enemy'
+    });
+
   pointLight.position.x = 10;
   pointLight.position.y = 50;
   pointLight.position.z = 130;
@@ -412,6 +488,12 @@ var init = function(name) {
       var newAlly = new Ally(entity._id, entity.x, entity.y, {x: entity.lastMove.x, y: entity.lastMove.y} );
       game.entities.push(newAlly);
       //scene.add(newAlly.mesh);
+    }
+    if(entity.type === 'enemy' && !scene.getObjectByName(entity._id)){
+        console.log(entity);
+      var newEnemy = new Enemy(entity._id, entity.targets, entity.startTime );
+      game.entities.push(newEnemy);
+
     }
   });
   handle = query.observeChanges({
@@ -441,6 +523,12 @@ var init = function(name) {
         var newAlly = new Ally(id, entity.x, entity.y, {x: entity.lastMove.x, y: entity.lastMove.y} );
         game.entities.push(newAlly);
         //scene.add(newAlly.mesh);
+      }
+      if(entity.type === 'enemy' && !scene.getObjectByName(id)){
+        console.log('Startime:'+entity.startTime);
+        var newEnemy = new Enemy(id, entity.targets, entity.startTime );
+        game.entities.push(newEnemy);
+
       }
     },
     removed: function (id) {
@@ -488,8 +576,17 @@ var init = function(name) {
 //
 //////////////////////////////////////////
 Meteor.startup(function () {
+  // clocks
+   setInterval(function () {
+      Meteor.call("getServerTime", function (error, result) {
+          Session.set("time", result);
+      });
+  }, 1000);
+  // adding player to entities on load
   var entityId = Entities.insert({x: 0, y: 0, lastMove: {x: 0, y: 0 }, time: new Date().getTime(), type: 'ally'});
+  // initialize the client gui
   init(entityId);
+  // resize the window so we can maintain ratio
   window.addEventListener('resize', game.onWindowResize);
 });
 
