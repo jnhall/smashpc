@@ -1,6 +1,57 @@
 /*jslint white: true, sloppy: true */
 // entire game state, timestep between last render, and object full of currently held keys
-var game, timestep = 0, down = {}, camera, renderer, scene;
+var game,
+  timestep = 0,
+  down = {},
+  camera,
+  renderer,
+  scene,
+  AXES = ['x', 'y'],
+  BOT_ACCURACY = 1;
+var ammo;
+
+//////////////////////////////////////////
+//
+// Enemy prototype
+//
+//////////////////////////////////////////
+
+var Enemy = function(name) {
+  var geometry = new THREE.CylinderGeometry(12, 0, 22, 3, 1, false);
+  geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
+  var material = new THREE.MeshLambertMaterial({color: 0xFF00FF });
+  mesh = new THREE.Mesh( geometry, material );
+  scene.add(mesh);
+
+  mesh.name = name;
+  mesh.type = 'enemy';
+
+  mesh.updated = {
+    x: x, y: y, lastMove: {x: lastMove.x, y: lastMove.y}, time: new Date().getTime()
+  };
+
+  this.mesh = mesh;
+
+
+  this.motion = {
+    x: {curr: 0, accel: 2000, deccel: 3000, max: 200, magnitude: 0},
+    y: {curr: 0, accel: 1500, deccel: 2000, max: 150, magnitude: 0}};
+
+  this.weapon = new Weapon(
+    150,
+    0.1,
+    2
+    );
+
+};
+
+Enemy.prototype.move = function() {
+
+};
+
+Enemy.prototype.update = function() {
+  this.move();
+};
 
 //////////////////////////////////////////
 //
@@ -8,15 +59,17 @@ var game, timestep = 0, down = {}, camera, renderer, scene;
 //
 //////////////////////////////////////////
 
-var Projectile = function(mesh, direction, speed, cooldown, lifetime) {
-  this.mesh = new THREE.Mesh(mesh.geometry, mesh.material);
-  this.mesh.position.copy(game.player.mesh.position);
+var Projectile = function(position, direction, speed, lifetime, start, from) {
   this.direction = new THREE.Vector3().copy(direction);
+  this.from = from;
   this.speed = speed;
+
+  this.mesh = new THREE.Mesh(ammo.geometry, ammo.material);
+  this.mesh.position.copy(position);
+  this.mesh.position.add(
+    new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed * (new Date().getTime() - start)/1000));
   this.lifetime = lifetime;
   scene.add(this.mesh);
-
-  this.cooldown = {current: 0, max: cooldown, lastCheck: new Date().getTime()};
 
   return this;
 };
@@ -29,9 +82,8 @@ Projectile.prototype.update = function() {
     game.projectiles.splice(game.projectiles.indexOf(this), 1);
     //console.log(this.speed);
     scene.remove(this.mesh);
-
   }
-  this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed));
+  this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed*timestep));
 };
 
 
@@ -41,9 +93,7 @@ Projectile.prototype.update = function() {
 //
 //////////////////////////////////////////
 
-var Weapon = function(mesh, speed, cooldown, lifetime) {
-  this.mesh = new THREE.Mesh(mesh.geometry, mesh.material);
-  console.log(this.mesh);
+var Weapon = function(speed, cooldown, lifetime) {
   this.speed = speed;
   this.cooldown = {current: 0, max: cooldown, lastCheck: new Date().getTime()};
   this.lifetime = lifetime;
@@ -55,17 +105,15 @@ Weapon.prototype.pullTrigger = function() {
     if(this.cooldown.current <= 0){
       //FIRE!
       this.cooldown.current = this.cooldown.max;
-      console.log("this.speed:"+this.speed);
-      console.log(this.cooldown.current);
-      game.projectiles.push(
-        new Projectile(
-          this.mesh,
-          new THREE.Vector3(0,1,0),
-          this.speed,
-          this.cooldown,
-          this.lifetime
-        )
-      );
+      game.player
+      Projectiles.insert({
+          posx: game.player.mesh.position.x, posy: game.player.mesh.position.y, posz: game.player.mesh.position.z,
+          dirx: 0, diry: 1, dirz: 0,
+          speed: this.speed,
+          lifetime: this.lifetime,
+          start: new Date().getTime(),
+          from: game.player.name
+      });
     }
 };
 
@@ -79,18 +127,92 @@ var Ally = function(name, x, y, lastMove) {
   var geometry = new THREE.CylinderGeometry(12, 0, 22, 3, 1, false);
   geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
   var material = new THREE.MeshLambertMaterial({color: 0x00FF00 });
-  var mesh = new THREE.Mesh( geometry, material );
+  mesh = new THREE.Mesh( geometry, material );
   scene.add(mesh);
 
   mesh.name = name;
   mesh.type = 'ally';
-  mesh.position.x = x;
-  mesh.position.y = y;
-  mesh.position.lastMove = {x: lastMove.x, y: lastMove.y};
+
+  mesh.updated = {
+    x: x, y: y, lastMove: {x: lastMove.x, y: lastMove.y}, time: new Date().getTime()
+  };
+
+  mesh.target = {
+    x: x, y: y, time: new Date().getTime()
+  };
 
   this.mesh = mesh;
+
+
+  this.motion = {
+    x: {curr: 0, accel: 2000, deccel: 3000, max: 200, magnitude: 0},
+    y: {curr: 0, accel: 1500, deccel: 2000, max: 150, magnitude: 0}};
+
+  this.weapon = new Weapon(
+    150,
+    0.1,
+    2
+    );
 };
 
+Ally.prototype.move = function() {
+    // the rest is copied form player
+  var moveInfo = { x: null, y: null, lastMove:{x: 0, y: 0} , time: null}, motion, i;
+
+
+  for(i=0; i<AXES.length; i += 1) {  
+    if(this.mesh.target[AXES[i]] - this.mesh.position[AXES[i]] < BOT_ACCURACY
+      && this.mesh.target[AXES[i]] - this.mesh.position[AXES[i]] > -BOT_ACCURACY ){
+      continue;
+    }
+    motion = this.motion[AXES[i]];
+    motion.magnitude = 0;
+
+    if(this.mesh.target[AXES[i]]>this.mesh.position[AXES[i]])
+      motion.magnitude = 1.0;
+
+    if(this.mesh.target[AXES[i]]<this.mesh.position[AXES[i]])
+      motion.magnitude = -1.0;
+
+    if(motion.magnitude!==0){
+      if( (motion.magnitude>0 && motion.curr<0) 
+        || (motion.magnitude<0 && motion.curr>0) ) {
+        motion.curr = 0;
+      }
+
+      motion.curr += motion.magnitude * motion.accel*timestep;
+
+      if( (motion.curr>motion.max)
+        || (motion.curr<-motion.max) ){
+        motion.curr = motion.magnitude*motion.max;
+      }
+    }
+    else {
+      if(Math.abs(motion.curr) - motion.deccel*timestep < 0) {
+        motion.curr = 0; 
+      } else if(motion.curr > 0) {
+        motion.curr = motion.curr - motion.deccel*timestep;
+      } else {
+        motion.curr = motion.curr + motion.deccel*timestep;
+      }
+    }
+    if(this.mesh.target[AXES[i]]<this.mesh.position[AXES[i]] + motion.curr * timestep
+      && this.mesh.target[AXES[i]]>this.mesh.position[AXES[i]] + motion.curr * timestep)
+      motion.curr = (this.mesh.target[AXES[i]] - this.mesh.position[AXES[i]])/timestep;
+    moveInfo.lastMove[AXES[i]] = motion.curr;
+    moveInfo[AXES[i]] = (this.mesh.position[AXES[i]] += moveInfo.lastMove[AXES[i]]*timestep);
+  }
+
+  //return moveInfo;
+}
+
+Ally.prototype.update = function() {
+  return {
+    moveInfo: this.move()
+  }
+  //this.cooldown.current -= timestep;
+  //this.cooldown.current = this.cooldown.max;
+};
 
 //////////////////////////////////////////
 //
@@ -110,30 +232,27 @@ var Player = function(name) {
   this.id = name;
 
   this.motion = {
-    x: {curr: 0, accel: 1, deccel: 1.8, max: 3, magnitude: 0},
-    y: {curr: 0, accel: 0.9, deccel: 0.9, max: 1.8, magnitude: 0}};
+    x: {curr: 0, accel: 2000, deccel: 3000, max: 200, magnitude: 0},
+    y: {curr: 0, accel: 1500, deccel: 2000, max: 150, magnitude: 0}};
 
   this.weapon = new Weapon(
-    new THREE.Mesh(new THREE.CubeGeometry(1,5,1), new THREE.MeshBasicMaterial({color:0xFF0000})),
-    3,
-    100,
-    1000
-  );
-  this.isFiring = false;
-
-  this.axes = Object.keys(this.motion);
+    150,
+    0.1,
+    2
+    );
 };
 
+//Player.prototype = new Entity(this.name);
 Player.prototype.move = function() {
   if(!this.motion.x.magnitude
     && !this.motion.x.curr
     && !this.motion.y.magnitude
     && !this.motion.y.curr)
     return;
-  var moveInfo = { x: null, y: null, lastMove:{x: 0, y: 0} }, motion, i;
+  var moveInfo = { x: null, y: null, lastMove:{x: 0, y: 0} , time: null}, motion, i;
 
-  for(i=0; i<this.axes.length; i += 1) {
-    motion = this.motion[this.axes[i]];
+  for(i=0; i<AXES.length; i += 1) {
+    motion = this.motion[AXES[i]];
 
     if(motion.magnitude!==0){
       if( (motion.magnitude>0 && motion.curr<0) 
@@ -141,7 +260,7 @@ Player.prototype.move = function() {
         motion.curr = 0;
       }
 
-      motion.curr = motion.curr + motion.magnitude * motion.accel;
+      motion.curr += motion.magnitude * motion.accel*timestep;
 
       if( (motion.curr>motion.max)
         || (motion.curr<-motion.max) ){
@@ -149,19 +268,18 @@ Player.prototype.move = function() {
       }
     }
     else {
-      if(Math.abs(motion.curr) - motion.accel*3 < 0) {
+      if(Math.abs(motion.curr) - motion.deccel*timestep < 0) {
         motion.curr = 0; 
       } else if(motion.curr > 0) {
-        motion.curr = motion.curr - motion.accel*3;
+        motion.curr = motion.curr - motion.deccel*timestep;
       } else {
-        motion.curr = motion.curr + motion.accel*3;
+        motion.curr = motion.curr + motion.deccel*timestep;
       }
     }
-    moveInfo.lastMove[this.axes[i]] = motion.curr;
-    moveInfo[this.axes[i]] = (this.mesh.position[this.axes[i]] += motion.curr);
-    //console.log(this.mesh.position[this.axes[i]]);
+    moveInfo.lastMove[AXES[i]] = motion.curr;
+    moveInfo[AXES[i]] = (this.mesh.position[AXES[i]] += moveInfo.lastMove[AXES[i]]*timestep);
   }
-
+  moveInfo.time = new Date().getTime();
   return moveInfo;
 };
 
@@ -188,28 +306,39 @@ Player.prototype.update = function() {
 
 game = {
   player : null,
-  friends : [],
+  entities : [],
   projectiles : [],
   lastUpdate : new Date().getTime(),
+  throttle : {sinceLastUpdate: 0, max: 0.05 },
   update : function() {
     var i;
-
     for(i=0; i<this.projectiles.length; i += 1){
       if(this.projectiles[i].lifetime != NaN);
         this.projectiles[i].update();
     }
 
+    for(i=0; i<this.entities.length; i += 1){
+      this.entities[i].update();
+    }
 
     var updateInfo = this.player.update();
-    Entities.update(this.player.id, {$set: updateInfo.moveInfo});
+    this.throttle.sinceLastUpdate += timestep;
+    if(this.throttle.sinceLastUpdate >= this.throttle.max){
+      this.throttle.sinceLastUpdate = 0;
+      if(updateInfo.moveInfo){
+        Entities.update(this.player.id, {$set: updateInfo.moveInfo});
+      }
+    }
 
+    /*
     for(i=0; i<scene.children.length; i += 1) {
       if(scene.children[i].name=="ally" && scene.children[i].position.lastMove!==undefined
         && ( scene.children[i].lastMove.x !== 0 || scene.children[i].position.lastMove.y !== 0 )) {
-        scene.children[i].position.x += (scene.children[i].position.lastMove.x*=0.99);
-        scene.children[i].position.y += (scene.children[i].position.lastMove.y*=0.99);
+        scene.children[i].position.x += (scene.children[i].position.lastMove.x*=timestep);
+        scene.children[i].position.y += (scene.children[i].position.lastMove.y*=timestep);
       }
     }
+    */
   },
 
   onWindowResize : function() {
@@ -228,7 +357,7 @@ game = {
 //////////////////////////////////////////
 
 var animate = function() {
-  timestep = new Date().getTime() - game.lastUpdate;
+  timestep = (new Date().getTime() - game.lastUpdate)/1000;
   game.lastUpdate = new Date().getTime();
   game.update();
   requestAnimationFrame( animate );
@@ -255,12 +384,13 @@ var init = function(name) {
       pointLight = new THREE.PointLight( 0xFFFFFF ),
       query, handle;
 
+  ammo = new THREE.Mesh(new THREE.CubeGeometry(1,5,1), new THREE.MeshBasicMaterial({color:0xFF0000}));
   camera = new THREE.PerspectiveCamera(  VIEW_ANGLE,
                                   ASPECT,
                                   NEAR,
                                   FAR  );
   scene = new THREE.Scene();
-  camera.position.z = 250;
+  camera.position.z = 400;
   scene.add(camera);
   game.player = new Player(name);
 
@@ -276,14 +406,31 @@ var init = function(name) {
   var $container = $('.container');
   $container.append(renderer.domElement);
   //scene.add(new THREE.Mesh(new THREE.CubeGeometry(5,5,5), new THREE.MeshBasicMaterial({color: 0xff0000})));
-
   query = Entities.find({});
+  query.forEach(function (entity) {
+    if(entity.type === 'ally'){
+      var newAlly = new Ally(entity._id, entity.x, entity.y, {x: entity.lastMove.x, y: entity.lastMove.y} );
+      game.entities.push(newAlly);
+      //scene.add(newAlly.mesh);
+    }
+  });
   handle = query.observeChanges({
     changed: function (id, fields) {
       if(id===game.player.id)
         return;
       var changed = scene.getObjectByName(id);
-      $.extend(changed.position, fields);
+      //console.log(fields);
+      $.extend(changed.updated, fields);
+      if(fields.time){
+        var delay = (new Date().getTime() - fields.time)/1000;
+        changed.target = {
+          x: changed.updated.x+2*delay*changed.updated.lastMove.x,
+          y: changed.updated.y+2*delay*changed.updated.lastMove.y,
+          time: new Date().getTime() + delay*1000
+        };
+        //console.log(changed.target); 
+        //console.log(changed.position); 
+      }
     },
     added: function (id) {
       if(id===game.player.id)
@@ -292,7 +439,7 @@ var init = function(name) {
       var entity = Entities.findOne(id);
       if(entity.type === 'ally'){
         var newAlly = new Ally(id, entity.x, entity.y, {x: entity.lastMove.x, y: entity.lastMove.y} );
-        console.log(newAlly);
+        game.entities.push(newAlly);
         //scene.add(newAlly.mesh);
       }
     },
@@ -300,6 +447,37 @@ var init = function(name) {
       var changed = scene.getObjectByName(id);
       scene.remove(changed);
     }
+  });
+
+  query = Projectiles.find({});
+  query.forEach(function (prj) { //direction, speed, cooldown, lifetime, start, from
+      console.log(prj);
+    game.projectiles.push(new Projectile(
+        new THREE.Vector3(prj.posx, prj.posy, prj.posz),
+        new THREE.Vector3(prj.dirx, prj.diry, prj.dirz),
+        prj.speed, prj.lifetime, prj.start, prj.from));
+  });
+  handle = query.observeChanges({
+  /*
+    changed: function (id, fields) {
+      if(id===game.player.id)
+        return;
+      var changed = scene.getObjectByName(id);
+      $.extend(changed.updated, fields);
+    },*/
+    added: function (id) {
+      var prj = Projectiles.findOne(id);
+      game.projectiles.push(new Projectile(
+        new THREE.Vector3(prj.posx, prj.posy, prj.posz),
+        new THREE.Vector3(prj.dirx, prj.diry, prj.dirz),
+        prj.speed, prj.lifetime, prj.start, prj.from
+      ));
+
+    }/*,
+    removed: function (id) {
+      var changed = scene.getObjectByName(id);
+      scene.remove(changed);
+    }*/
   });
   animate();
 };
@@ -310,7 +488,7 @@ var init = function(name) {
 //
 //////////////////////////////////////////
 Meteor.startup(function () {
-  var entityId = Entities.insert({x: 0, y: 0, lastMove: {x: 0, y: 0 }, type: 'ally'});
+  var entityId = Entities.insert({x: 0, y: 0, lastMove: {x: 0, y: 0 }, time: new Date().getTime(), type: 'ally'});
   init(entityId);
   window.addEventListener('resize', game.onWindowResize);
 });
