@@ -7,7 +7,8 @@ var game,
   renderer,
   scene,
   AXES = ['x', 'y'],
-  BOT_ACCURACY = 1;
+  BOT_ACCURACY = 1,
+  GAME_Z = 0;
 var ammo;
 
 //////////////////////////////////////////
@@ -17,11 +18,11 @@ var ammo;
 //////////////////////////////////////////
 
 var Enemy = function(name, targets, startTime) {
-  var geometry = new THREE.CubeGeometry(10,10,1);
+  var geometry = new THREE.CubeGeometry(10,10,100);
   geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
   var material = new THREE.MeshLambertMaterial({color: 0xFF00FF });
   mesh = new THREE.Mesh( geometry, material );
-  scene.add(mesh);
+  game.add(mesh);
 
   mesh.name = name;
   mesh.type = 'enemy';
@@ -38,32 +39,49 @@ var Enemy = function(name, targets, startTime) {
   this.nextTarget = 0;  
 
   mesh.target = {
-    x: this.targets[0].x, y: this.targets[0].y
+    x: this.targets[0].x,
+    y: this.targets[0].y,
+    time: this.targets[0].time,
+    next: this.targets[0].next
   };
-  console.log("is a "+startTime);
+  //console.log("is a "+startTime);
 
-  this.startTime = startTime;
+  this.lastDate = startTime;
 
   this.isActive = false;
 };
 
 Enemy.prototype.move = function() {
   if(!this.isActive) {
-    if(new Date().getTime() < this.startTime){
-      console.log((new Date().getTime())+"<"+this.startTime)
+    if(new Date().getTime() < this.lastDate){
+      //console.log((new Date().getTime())+"<"+this.startTime)
       return;
 
     }
     else
       this.isActive = true;
   }
+  var timeFactor = (new Date().getTime() - this.lastDate)/(this.mesh.target.time*1000);
+  while(timeFactor >= 1) {
+    this.lastDate += this.mesh.target.time*1000;
+    this.mesh.target.x = this.targets[this.mesh.target.next].x;
+    this.mesh.target.y = this.targets[this.mesh.target.next].y;
+    this.mesh.target.time = this.targets[this.mesh.target.next].time;
+    this.mesh.target.next = this.targets[this.mesh.target.next].next;
+    timeFactor = (new Date().getTime() - this.lastDate)/(this.mesh.target.time*1000);
+  }
 
-  var moveInfo = { x: null, y: null, lastMove:{x: 0, y: 0} , time: null}, motion, i;
+  var dx = (this.targets[this.mesh.target.next].x - this.mesh.target.x)*timeFactor;
+  var dy = (this.targets[this.mesh.target.next].y - this.mesh.target.y)*timeFactor;
+
+  this.mesh.position = new THREE.Vector3(this.mesh.target.x+dx, this.mesh.target.y+dy, GAME_Z);
+
+  /*var moveInfo = { x: null, y: null, lastMove:{x: 0, y: 0} , time: null}, motion, i;
 
   var arrived = false;
   for(i=0; i<AXES.length; i += 1) {  
-    if(this.mesh.target[AXES[i]] - this.mesh.position[AXES[i]] < BOT_ACCURACY
-      && this.mesh.target[AXES[i]] - this.mesh.position[AXES[i]] > -BOT_ACCURACY ){
+    if(this.mesh.target[AXES[i]] === this.mesh.position[AXES[i]]
+      && this.mesh.target[AXES[i]] === this.mesh.position[AXES[i]] ){
       if(arrived === true){
         this.nextTarget = (this.nextTarget+1)%this.targets.length;
         this.mesh.target = {
@@ -109,11 +127,26 @@ Enemy.prototype.move = function() {
       motion.curr = (this.mesh.target[AXES[i]] - this.mesh.position[AXES[i]])/timestep;
     moveInfo.lastMove[AXES[i]] = motion.curr;
     moveInfo[AXES[i]] = (this.mesh.position[AXES[i]] += moveInfo.lastMove[AXES[i]]*timestep);
-  }
+  }*/
 };
 
 Enemy.prototype.update = function() {
-  this.move();
+    return {
+      moveInfo: this.move(),
+      collisionInfo: this.collisions()
+  };
+};
+
+Enemy.prototype.collisions = function() {
+  if(this.mesh.updated) {
+    if(this.mesh.updated.collision) {
+      this.onCollision(this.mesh.updated.collision.projectile)
+    }
+  }
+}
+
+Enemy.prototype.onCollision = function(name) {
+  scene.remove(scene.getObjectByName(this.mesh.name));
 };
 
 //////////////////////////////////////////
@@ -122,18 +155,25 @@ Enemy.prototype.update = function() {
 //
 //////////////////////////////////////////
 
-var Projectile = function(position, direction, speed, lifetime, start, from) {
+var Projectile = function(mtrId, position, direction, speed, lifetime, start, from) {
   this.direction = new THREE.Vector3().copy(direction);
   this.from = from;
   this.speed = speed;
+  this.mtrId = mtrId;
 
   this.mesh = new THREE.Mesh(ammo.geometry, ammo.material);
   this.mesh.position.copy(position);
   this.mesh.position.add(
     new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed * (new Date().getTime() - start)/1000));
   this.lifetime = lifetime;
-  scene.add(this.mesh);
-
+  game.add(this.mesh);
+  this.mesh.name = 'projectile';
+  this.mesh.geometry.computeBoundingBox();
+  this.rayOrigin = new THREE.Vector3(this.mesh.geometry.boundingBox.min.x,this.mesh.geometry.boundingBox.min.y,GAME_Z);
+  this.rayDirection = new THREE.Vector3(this.mesh.geometry.boundingBox.max.x,this.mesh.geometry.boundingBox.max.y,GAME_Z)
+    .sub(this.rayOrigin);
+  this.rayDistance = this.rayDirection.length();
+  this.rayOrigin.add(this.mesh.position);
   return this;
 };
 
@@ -146,7 +186,37 @@ Projectile.prototype.update = function() {
     //console.log(this.speed);
     scene.remove(this.mesh);
   }
-  this.mesh.position.add(new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed*timestep));
+  var motion = new THREE.Vector3().copy(this.direction).multiplyScalar(this.speed*timestep);
+  this.mesh.position.add(motion);
+  this.rayOrigin.add(motion);
+
+  // for now, only check collisions from the local player
+  // maybe broadcast collisions detected locally?
+  if(this.from !== game.player.name)
+    return;
+
+  var ray = new THREE.Raycaster(this.rayOrigin, this.rayDirection, 0, this.rayDistance);
+  //console.log(ray);
+  var i;
+  for(i=0;i<game.entities.length;i++) {
+    var intersects = ray.intersectObject(game.entities[i].mesh, true);
+    //console.log(scene.children);
+    if(intersects.length>0) {
+      if(intersects[0].object.type === 'enemy') {
+        //game.entities[i].onCollision(intersects[0]);
+        //var entity = Entities.findOne(intersects[0].object.name);
+        //Entities.remove(intersets[0].object.name);
+        //scene.getObjectByName(entity._id);
+        var objects = {
+          projectile : this.mtrId,
+          object: game.entities[i].mesh.name
+        };
+        Projectiles.update(this.mtrId, {$set: { collision : objects }});
+        Entities.update(intersects[0].object.name, {$set: { collision : objects }});
+        //scene.remove(this.mesh);
+      }
+    }
+  }
 };
 
 
@@ -190,7 +260,7 @@ var Ally = function(name, x, y, lastMove) {
   geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
   var material = new THREE.MeshLambertMaterial({color: 0x00FF00 });
   mesh = new THREE.Mesh( geometry, material );
-  scene.add(mesh);
+  game.add(mesh);
 
   mesh.name = name;
   mesh.type = 'ally';
@@ -287,7 +357,7 @@ var Player = function(name) {
   geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
   var material = new THREE.MeshPhongMaterial({color: 0x00FFFF });
   var mesh = new THREE.Mesh( geometry, material );
-  scene.add(mesh);
+  game.add(mesh);
 
   this.mesh = mesh;
   this.name = name;
@@ -342,7 +412,7 @@ Player.prototype.move = function() {
     moveInfo[AXES[i]] = (this.mesh.position[AXES[i]] += moveInfo.lastMove[AXES[i]]*timestep);
   }
   moveInfo.time = new Date().getTime();
-  console.log(this.mesh.position);
+  //console.log(this.mesh.position);
   return moveInfo;
 };
 
@@ -410,6 +480,11 @@ game = {
     camera.aspect = windowWidth / windowHeight;
     camera.updateProjectionMatrix();
     renderer.setSize( windowWidth, windowHeight );
+  },
+
+  add : function(mesh) {
+    mesh.position.z = GAME_Z;
+    scene.add(mesh);
   }
 };
 
@@ -457,19 +532,6 @@ var init = function(name) {
   scene.add(camera);
   game.player = new Player(name);
 
-
-  var testTargets = [{x: -140, y: 140} , {x: 140, y: 140}],
-    startTime = Session.get('time')+5000;
-  game.entities.push(new Enemy('test', 
-      testTargets,
-      startTime));
-  Entities.insert({ 
-      name: 'test',
-      targets: testTargets,
-      startTime: startTime,
-      type: 'enemy'
-    });
-
   pointLight.position.x = 10;
   pointLight.position.y = 50;
   pointLight.position.z = 130;
@@ -484,6 +546,8 @@ var init = function(name) {
   //scene.add(new THREE.Mesh(new THREE.CubeGeometry(5,5,5), new THREE.MeshBasicMaterial({color: 0xff0000})));
   query = Entities.find({});
   query.forEach(function (entity) {
+    if(entity._id === game.player.id)
+      return;
     if(entity.type === 'ally'){
       var newAlly = new Ally(entity._id, entity.x, entity.y, {x: entity.lastMove.x, y: entity.lastMove.y} );
       game.entities.push(newAlly);
@@ -502,6 +566,8 @@ var init = function(name) {
         return;
       var changed = scene.getObjectByName(id);
       //console.log(fields);
+      if(!changed.updated)
+        changed.updated = {};
       $.extend(changed.updated, fields);
       if(fields.time){
         var delay = (new Date().getTime() - fields.time)/1000;
@@ -512,6 +578,9 @@ var init = function(name) {
         };
         //console.log(changed.target); 
         //console.log(changed.position); 
+      }
+      if(changed.type === 'enemy') {
+        console.log(changed);
       }
     },
     added: function (id) {
@@ -526,24 +595,28 @@ var init = function(name) {
       }
       if(entity.type === 'enemy' && !scene.getObjectByName(id)){
         console.log('Startime:'+entity.startTime);
+        console.log(entity);
         var newEnemy = new Enemy(id, entity.targets, entity.startTime );
         game.entities.push(newEnemy);
 
       }
     },
     removed: function (id) {
-      var changed = scene.getObjectByName(id);
-      scene.remove(changed);
+      //var changed = scene.getObjectByName(id);
+      //scene.remove(changed);
     }
   });
 
   query = Projectiles.find({});
   query.forEach(function (prj) { //direction, speed, cooldown, lifetime, start, from
       console.log(prj);
-    game.projectiles.push(new Projectile(
+      var projectile = new Projectile(
+        prj._id,
         new THREE.Vector3(prj.posx, prj.posy, prj.posz),
         new THREE.Vector3(prj.dirx, prj.diry, prj.dirz),
-        prj.speed, prj.lifetime, prj.start, prj.from));
+        prj.speed, prj.lifetime, prj.start, prj.from);
+
+    game.projectiles.push(projectile);
   });
   handle = query.observeChanges({
   /*
@@ -555,11 +628,13 @@ var init = function(name) {
     },*/
     added: function (id) {
       var prj = Projectiles.findOne(id);
-      game.projectiles.push(new Projectile(
+      var projectile = new Projectile(
+        id,
         new THREE.Vector3(prj.posx, prj.posy, prj.posz),
         new THREE.Vector3(prj.dirx, prj.diry, prj.dirz),
-        prj.speed, prj.lifetime, prj.start, prj.from
-      ));
+        prj.speed, prj.lifetime, prj.start, prj.from);
+      projectile.mesh.geometry.computeBoundingBox();
+    game.projectiles.push(projectile);
 
     }/*,
     removed: function (id) {
@@ -651,11 +726,30 @@ Template.content.events({
 });
 
 Template.controls.events({
-  'click input#reset' : function () {
+  'click input#spawn' : function () {
+
+  var testTargets = [
+      {x: -140, y: 140, time: 5, next: 1},
+      {x: 140, y: 140, time: 5, next: 0}
+    ],
+    startTime = Session.get('time');
+  if(!startTime)
+  return;
+    //while(!(startTime = Session.get('time')+5000)){console.log(Session.get('time'));};
+  var enemyId = Entities.insert({
+      targets: testTargets,
+      startTime: startTime,
+      type: 'enemy'
+    });
+  game.entities.push(new Enemy(enemyId, 
+      testTargets,
+      startTime));
+  /*
     var entities = Entities.find({});
     entities.forEach(function (entity) {  
       Entities.remove(entity._id);
     });
+*/
   },
   'keydown input#name' : function (e) {
     console.log(e);//Session.set('name', $())
