@@ -1,3 +1,4 @@
+'use strict';
  Meteor.startup(function () {
     Entities.remove({});
     Projectiles.remove({});

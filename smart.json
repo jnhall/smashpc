@@ -1,5 +1,9 @@
 {
-  "packages": {
-    "three": {}
+ "packages": {
+  "physijs": {
+    "git": "https://github.com/jnhall/meteor-physijs.git",
+    "tag": "v0.0.4",
+    "commit": "9d0a9b1b591133c8f762b1f901663dcaa106369f"
   }
+ }
 }

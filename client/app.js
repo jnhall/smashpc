@@ -1,4 +1,5 @@
 /*jslint white: true, sloppy: true */
+'use strict';
 // entire game state, timestep between last render, and object full of currently held keys
 var game,
   timestep = 0,
@@ -7,9 +8,30 @@ var game,
   renderer,
   scene,
   AXES = ['x', 'y'],
+  LEVEL = {
+    dims: {
+      x: 1000,
+      y: 1000
+    }
+  },
   BOT_ACCURACY = 1,
-  GAME_Z = 0;
+  GAME_Z = 0,
+  katamari;
 var ammo;
+
+  
+Physijs.scripts.worker = 'packages/physijs/lib/physijs_worker.js';
+Physijs.scripts.ammo = 'packages/physijs/lib/ammo.js';
+
+// Rotate an object around an arbitrary axis in world space
+var rotWorldMatrix;
+function rotateAroundWorldAxis(object, axis, radians) {
+  rotWorldMatrix = new THREE.Matrix4();
+  rotWorldMatrix.makeRotationAxis(axis.normalize(), radians);
+  rotWorldMatrix.multiply(object.matrix);
+  object.matrix = rotWorldMatrix;
+  object.rotation.setFromRotationMatrix(object.matrix);
+}
 
 //////////////////////////////////////////
 //
@@ -17,7 +39,7 @@ var ammo;
 //
 //////////////////////////////////////////
 
-var Enemy = function(name, targets, startTime) {
+var mesh, Enemy = function(name, targets, startTime) {
   var geometry = new THREE.CubeGeometry(10,10,100);
   geometry.applyMatrix(new THREE.Matrix4().makeRotationX(Math.PI));
   var material = new THREE.MeshLambertMaterial({color: 0xFF00FF });
@@ -431,6 +453,13 @@ Player.prototype.update = function() {
   //this.cooldown.current = this.cooldown.max;
 };
 
+Player.prototype.forward = function() {
+  return (new THREE.Vector3(0, 1, 0)).applyMatrix4(this.mesh.matrix);
+}
+Player.prototype.up = function() {
+  return (new THREE.Vector3(0, 0, 1)).applyMatrix4(this.mesh.matrix);
+}
+
 //////////////////////////////////////////
 //
 // Game state
@@ -527,15 +556,157 @@ var init = function(name) {
                                   ASPECT,
                                   NEAR,
                                   FAR  );
-  scene = new THREE.Scene();
+  scene = new Physijs.Scene();
   camera.position.z = 400;
-  scene.add(camera);
+  camera.position.y = -400;
+  camera.rotateX(45);
   game.player = new Player(name);
+  game.player.mesh.add(camera);
+
+  var Katamari = function(radius) {
+    var mesh = new THREE.Mesh(new THREE.SphereGeometry(radius), new THREE.MeshPhongMaterial({color:0xDADDAB}));
+    mesh.position = new THREE.Vector3().copy(mesh.position);
+    mesh.position.add(game.player.forward().multiplyScalar(radius/2));
+    mesh.position.add(game.player.up().multiplyScalar(radius/2));
+    game.player.mesh.add(mesh);
+
+    this.radius = radius;
+    this.mesh = mesh;
+    this.pos = this.mesh.parent.position;
+    this.lastPos = new THREE.Vector3().copy(this.mesh.position);
+  };
+
+  Katamari.prototype.update = function() {
+    //this.mesh.rotateX(0.01);
+    //console.log(this.circumference/(this.pos.y - this.lastPos.y));
+    var d = {
+        x: this.pos.x - this.lastPos.x,
+        y: this.lastPos.y - this.pos.y
+      },
+      angle;
+      /*
+    if(d.y!==0)
+      this.mesh.rotateOnAxis(
+        new THREE.Vector3(1,0,0).applyMatrix4(this.mesh.parent.matrix).normalize(),
+        d.y/this.magic);
+    if(d.x!==0)
+      this.mesh.rotateOnAxis(
+        new THREE.Vector3(0,0,-1).applyMatrix4(this.mesh.parent.matrix).normalize(),
+        d.x/this.magic);*/
+    if(d.y!==0) {
+      angle = d.y / (2 * Math.PI * this.radius) * Math.PI;
+      rotateAroundWorldAxis(this.mesh, new THREE.Vector3(1,0,0), angle);
+    }
+    if(d.x!==0) {
+      angle = d.x / (2 * Math.PI * this.radius) * Math.PI;
+      rotateAroundWorldAxis(this.mesh, new THREE.Vector3(0,1,0), angle);
+    }
+    this.lastPos.copy(this.mesh.parent.position);
+  };
+  katamari = new Katamari(50);
+  game.entities.push(katamari);
+  /*radius — sphere radius. Default is 50.
+widthSegments — number of horizontal segments. Minimum value is 3, and the default is 8.
+heightSegments — number of vertical segments. Minimum value is 2, and the default is 6.
+phiStart — specify horizontal starting angle. Default is 0.
+phiLength — specify horizontal sweep angle size. Default is Math.PI * 2.
+thetaStart — specify vertical starting angle. Default is 0.
+thetaLength — specify vertical sweep angle size. Default is Math.PI.*/
+
+  var Background = function(tileWidth, tileHeight, fieldWidth, fieldHeight) {
+    var tiles = [],
+      grid = {
+        width: Math.ceil(fieldWidth / tileWidth),
+        height: Math.ceil(fieldHeight / tileHeight)
+      },
+      offset = {
+        width: tileWidth * (-grid.width/2 + 1/2),
+        height: tileHeight * (-grid.height/2 + 1/2)
+      },
+      i,
+      j,
+      tile,
+      bgColor = function(i, j) {
+        var colors = {
+          even: 0xBAFF0D,
+          odd: 0xAD0DAB
+        };
+        if( i%2===0&&j%2===0 || i%2!==0&&j%2!==0 ) {
+          return colors.even;
+        }
+        return colors.odd;
+      };
+
+    for(i=0;i<grid.width;i++) {
+      for(j=0;j<grid.height;j++) {
+        tile = new THREE.Mesh(new THREE.PlaneGeometry(tileWidth, tileHeight), new THREE.MeshLambertMaterial({
+          color: bgColor(i, j),
+          transparent: true,
+          opacity: 0.5
+        }));
+        console.log(tile.material);
+        tile.position = new THREE.Vector3(
+          offset.width + i * tileWidth,
+          offset.height + j * tileHeight,
+          0);
+        scene.add(tile);
+        tiles.push(tile);
+      }
+    }
+  }
+  var background = new Background(100, 100, LEVEL.dims.x, LEVEL.dims.y);
+
+  var Field = function(count, width, height, center, objGen, objMod) {
+    var i,
+      obj;
+
+    for(i=0;i<count;i++) {
+      obj = new objGen();
+      if(objMod) {
+        objMod(objGen);
+      }
+      console.log(obj);
+      obj.mesh.position.x = center.x + (Math.random() - 0.5) * width;
+      obj.mesh.position.y = center.y + (Math.random() - 0.5) * height;
+      scene.add(obj.mesh);
+      game.entities.push(obj);
+    }
+  }
+  var field = new Field(
+    100,
+    LEVEL.dims.x,
+    LEVEL.dims.y,
+    new THREE.Vector3(0,0,0),
+    function () {
+      var mesh = new Physijs.BoxMesh(new THREE.CubeGeometry(50, 50, 50), new THREE.MeshPhongMaterial({color: 0x0000DB}));
+      this.mesh = mesh;
+      this.parented = false;
+      var katPos;
+      this.update = function() {
+        katPos = katamari.mesh.localToWorld(new THREE.Vector3(0,0,0));
+        //console.log(game.player.mesh.position.distanceTo(this.mesh.position));
+        if(this.parented)
+          return;
+        else if(katPos.distanceTo(this.mesh.position) < 50
+          || katPos.distanceTo(this.mesh.position) < 50) {
+          var offset = new THREE.Vector3().copy(this.mesh.position).sub(katPos);
+          katamari.mesh.add(this.mesh);
+          this.mesh.rotation.setFromQuaternion(katamari.mesh.rotation._quaternion.clone().inverse());
+          this.mesh.position = offset.applyMatrix4(new THREE.Matrix4().getInverse(katamari.mesh.matrix));
+          this.mesh.material.color.setHex(0x00DD00);
+          this.parented = true;
+        }
+      }
+    },
+    function (obj) {
+      return;
+    }
+  );
 
   pointLight.position.x = 10;
   pointLight.position.y = 50;
   pointLight.position.z = 130;
-  scene.add(pointLight);
+  game.player.mesh.add(pointLight);
 
   renderer = new THREE.WebGLRenderer();
   renderer.setClearColorHex(0x000000);
