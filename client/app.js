@@ -20,8 +20,8 @@ var game,
 var ammo;
 
   
-Physijs.scripts.worker = 'packages/physijs/lib/physijs_worker.js';
-Physijs.scripts.ammo = 'packages/physijs/lib/ammo.js';
+//Physijs.scripts.worker = 'packages/physijs/lib/physijs_worker.js';
+//Physijs.scripts.ammo = 'packages/physijs/lib/ammo.js';
 
 // Rotate an object around an arbitrary axis in world space
 var rotWorldMatrix;
@@ -556,7 +556,7 @@ var init = function(name) {
                                   ASPECT,
                                   NEAR,
                                   FAR  );
-  scene = new Physijs.Scene();
+  scene = new THREE.Scene();
   camera.position.z = 400;
   camera.position.y = -400;
   camera.rotateX(45);
@@ -678,7 +678,7 @@ thetaLength — specify vertical sweep angle size. Default is Math.PI.*/
     LEVEL.dims.y,
     new THREE.Vector3(0,0,0),
     function () {
-      var mesh = new Physijs.BoxMesh(new THREE.CubeGeometry(50, 50, 50), new THREE.MeshPhongMaterial({color: 0x0000DB}));
+      var mesh = new THREE.Mesh(new THREE.CubeGeometry(50, 50, 50), new THREE.MeshPhongMaterial({color: 0x0000DB}));
       this.mesh = mesh;
       this.parented = false;
       var katPos;
